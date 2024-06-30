@@ -298,7 +298,7 @@ ostream& operator<<(ostream& o, const cluster& c) {
 
 // Generates L^a_m, the family of big polymers of size m whose active
 // coordinates are precisely [a].
-vector<big_polymer> generate_big_polymers(int prefix_sz /* a */,
+vector<big_polymer> generate_big_polymers(int active_prefix_sz /* a */,
                                           int num_elements /* m */,
                                           bool full_prefix) {
     assert(num_elements < 31);
@@ -317,8 +317,8 @@ vector<big_polymer> generate_big_polymers(int prefix_sz /* a */,
         Lcur.clear();
         for (const set<hypercube_vertex>& prev_set : Lprev)
             for (auto v : prev_set)
-                for (int i = 0; i < prefix_sz; i++)
-                    for (int j = 0; j < prefix_sz; j++)
+                for (int i = 0; i < active_prefix_sz; i++)
+                    for (int j = 0; j < active_prefix_sz; j++)
                         if (i != j) {
                             set<hypercube_vertex> new_set = prev_set;
                             hypercube_vertex w = v.flip(i).flip(j);
@@ -338,7 +338,7 @@ vector<big_polymer> generate_big_polymers(int prefix_sz /* a */,
     for (const set<hypercube_vertex>& sbp : Lprev) {
         big_polymer bp(sbp);
         if (!full_prefix ||
-            bp.active_coords_prefix() == make_pair(true, prefix_sz))
+            bp.active_coords_prefix() == make_pair(true, active_prefix_sz))
             full_active.push_back(bp);
     }
 
@@ -357,8 +357,7 @@ GiNaC::ex compute_Lk(GiNaC::symbol lambda, GiNaC::symbol d, int k) {
                 generate_big_polymers(a, m, /* must_full_prefix = */ true);
 
             // Each set S in Lam ($L^a_m$) is potentially the vertex set of a
-            // cluster. We will call such S a "big polymer" (although we won't
-            // check that a big polymer is actually 2-linked). To obtain all
+            // cluster. We will call such S a "big polymer". To obtain all
             // possible clusters, we will split each S into a tuple of
             // 2-linked subsets of total size k in all possible ways.
 
@@ -370,30 +369,33 @@ GiNaC::ex compute_Lk(GiNaC::symbol lambda, GiNaC::symbol d, int k) {
                 vector<subpolymer> sps;
 
                 assert(big_polymer.num_vertices() < 31);
-                // Generate all possible 2-linked subpolymers (polymers are
-                // always non-empty).
+                // Generate all possible 2-linked subpolymers
+                // (polymers are always non-empty).
                 //
-                // TODO: There are cleverer ways to generate all two-linked
-                // subsets. At the very least, one may keep track of
-                // two-linked components.
-                for (int msk = 1; msk < (1 << big_polymer.num_vertices()); msk++) {
+                // TODO: There are cleverer ways to generate all
+                // two-linked subsets. At the very least, one may keep
+                // track of two-linked components.
+                for (int msk = 1; msk < (1<<big_polymer.num_vertices()); msk++) {
                     subpolymer sp(big_polymer, msk);
                     if (sp.is_two_linked())
                         sps.push_back(sp);
                 }
 
-                // Now we want to find all ways of picking clusters, which are
-                // tuples of subpolymers whose union is big_polymer (possibly
-                // with repeats) and whose total size is k.
+                // Now we want to find all ways of picking clusters,
+                // which are tuples of subpolymers whose union is
+                // big_polymer (possibly with repeats) and whose total
+                // size is k.
                 cluster current(big_polymer);
 
                 function<void()> backtrack = [&]() {
                     if (current.total_size() > k)
                         return;
 
-                    if (current.total_size() == k && current.covers_big_polymer()) {
+                    if (current.total_size() == k &&
+                        current.covers_big_polymer()) {
                         GiNaC::ex cur = current.compute_weight(lambda, d);
-                        cerr << "** Cluster " << current << " has weight " << cur << endl;
+                        cerr << "** Cluster " << current
+                             << " has weight " << cur << endl;
                         acc += cur;
                     }
 
