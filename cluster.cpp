@@ -40,6 +40,42 @@ ostream& operator<<(ostream& o, const hypercube_vertex& hv) {
     return o;
 }
 
+// A big polymer itself has a notion of active coordinates, even if
+// just during construction. Therefore it needs to know the root.
+struct partial_big_polymer {
+    set<hypercube_vertex> data;
+    int active_coords;
+
+    partial_big_polymer() : active_coords(0) { }
+    
+    bool add_vtx(const hypercube_vertex& v) {
+        auto it = data.find(v);
+        if (it != data.end())
+            return false;
+        
+        data.insert(v);
+        active_coords |= v.data;
+        return true;
+    }
+
+    // The true number of vertices to add to the big polymer to make a
+    // complete one should be *at least this*, and if this number
+    // should be zero if and only if this big polymer is complete.
+    int distance_to_complete() {
+        if (active_coords == 0)
+            return 0;
+        
+        int t = __builtin_clz(active_coords);
+        int ans = (__builtin_popcount(((1<<32-t)-1) & ~active_coords) + 1)/2;
+        assert(ans || !(active_coords & (active_coords+1)));
+        return ans;
+    }
+
+    bool operator<(const partial_big_polymer& p) const {
+        return data < p.data;
+    }    
+};
+
 class big_polymer {
     // Annoyingly, during construction it is really convenient to
     // have this as a set but we want to use the ordering later.
@@ -48,12 +84,9 @@ class big_polymer {
     int prefix_sz;
 
 public:
-    big_polymer(const set<hypercube_vertex>& shv) {
-        data = vector(shv.begin(), shv.end());
-
-        int active_coords = 0;
-        for (auto& v : data)
-            active_coords |= v.data;
+    big_polymer(const partial_big_polymer& shv) {
+        data = vector(shv.data.begin(), shv.data.end());
+        int active_coords = shv.active_coords;
 
         active_coords += 1;
         full_prefix = !(active_coords & (active_coords-1));
@@ -298,16 +331,14 @@ ostream& operator<<(ostream& o, const cluster& c) {
 
 // Generates L^a_m, the family of big polymers of size m whose active
 // coordinates are precisely [a].
-vector<big_polymer> generate_big_polymers(int active_prefix_sz /* a */,
-                                          int num_elements /* m */,
-                                          bool full_prefix) {
+vector<big_polymer> generate_big_polymers(int num_elements /* m */, int max_coord) {
     assert(num_elements < 31);
 
-    set<set<hypercube_vertex>> Lprev;
-    set<set<hypercube_vertex>> Lcur;
+    set<partial_big_polymer> Lprev;
+    set<partial_big_polymer> Lcur;
 
-    set<hypercube_vertex> start;
-    start.insert(hypercube_vertex());
+    partial_big_polymer start;
+    start.data.insert(hypercube_vertex());
     Lprev.insert(start);
 
     /* Generate the lists L_m of 2-linked subsets of E of size m which
@@ -315,18 +346,18 @@ vector<big_polymer> generate_big_polymers(int active_prefix_sz /* a */,
      * [2*K]. */
     for (int k = 1; k < num_elements; k++) {
         Lcur.clear();
-        for (const set<hypercube_vertex>& prev_set : Lprev)
-            for (auto v : prev_set)
-                for (int i = 0; i < active_prefix_sz; i++)
-                    for (int j = 0; j < active_prefix_sz; j++)
+        for (const partial_big_polymer& prev_set : Lprev)
+            for (auto v : prev_set.data)
+                for (int i = 0; i < max_coord; i++)
+                    for (int j = 0; j < max_coord; j++)
                         if (i != j) {
-                            set<hypercube_vertex> new_set = prev_set;
+                            partial_big_polymer new_set = prev_set;
                             hypercube_vertex w = v.flip(i).flip(j);
 
-                            if (new_set.find(w) == new_set.end()) {
-                                new_set.insert(w);
-                                assert(new_set.size() == k+1);
-                                if (Lcur.find(new_set) == Lcur.end())
+                            if (new_set.add_vtx(w)) {
+                                assert(new_set.data.size() == k+1);
+                                if (new_set.distance_to_complete() <= num_elements-(k+1) &&
+                                    Lcur.find(new_set) == Lcur.end())
                                     Lcur.insert(new_set);
                             }
                         }
@@ -334,12 +365,11 @@ vector<big_polymer> generate_big_polymers(int active_prefix_sz /* a */,
         swap(Lprev, Lcur);
     }
 
-    vector<big_polymer> full_active;
-    for (const set<hypercube_vertex>& sbp : Lprev) {
+    vector<big_polymer> full_active;    
+    for (const partial_big_polymer& sbp : Lprev) {
         big_polymer bp(sbp);
-        if (!full_prefix ||
-            bp.active_coords_prefix() == make_pair(true, active_prefix_sz))
-            full_active.push_back(bp);
+        assert(bp.active_coords_prefix().first);
+        full_active.push_back(bp);
     }
 
     return full_active;
@@ -351,64 +381,62 @@ GiNaC::ex compute_Lk(GiNaC::symbol lambda, GiNaC::symbol d, int k) {
     for (int m = 1; m <= k; m++) {
         GiNaC::ex a_sum;
 
-        for (int a = 0; a <= 2 * k; a++) {
+        vector<big_polymer> Lam = generate_big_polymers(m, 2*k);
+
+        // Each set S in Lam ($L^a_m$) is potentially the vertex set of a
+        // cluster. We will call such S a "big polymer". To obtain all
+        // possible clusters, we will split each S into a tuple of
+        // 2-linked subsets of total size k in all possible ways.
+
+        // TODO: Convert to iterator
+        for (auto &big_polymer : Lam) {
             GiNaC::ex acc;
-            vector<big_polymer> Lam =
-                generate_big_polymers(a, m, /* must_full_prefix = */ true);
+            int a = big_polymer.active_coords_prefix().second;
+                
+            cerr << "* Processing big polymer " << big_polymer
+                 << " at j = " << m << ", a = " << a << "" << endl;
 
-            // Each set S in Lam ($L^a_m$) is potentially the vertex set of a
-            // cluster. We will call such S a "big polymer". To obtain all
-            // possible clusters, we will split each S into a tuple of
-            // 2-linked subsets of total size k in all possible ways.
+            vector<subpolymer> sps;
 
-            // TODO: Convert to iterator
-            for (auto &big_polymer : Lam) {
-                cerr << "* Processing big polymer " << big_polymer
-                     << " at j = " << m << ", a = " << a << "" << endl;
-
-                vector<subpolymer> sps;
-
-                assert(big_polymer.num_vertices() < 31);
-                // Generate all possible 2-linked subpolymers
-                // (polymers are always non-empty).
-                //
-                // TODO: There are cleverer ways to generate all
-                // two-linked subsets. At the very least, one may keep
-                // track of two-linked components.
-                for (int msk = 1; msk < (1<<big_polymer.num_vertices()); msk++) {
-                    subpolymer sp(big_polymer, msk);
-                    if (sp.is_two_linked())
-                        sps.push_back(sp);
-                }
-
-                // Now we want to find all ways of picking clusters,
-                // which are tuples of subpolymers whose union is
-                // big_polymer (possibly with repeats) and whose total
-                // size is k.
-                cluster current(big_polymer);
-
-                function<void()> backtrack = [&]() {
-                    if (current.total_size() > k)
-                        return;
-
-                    if (current.total_size() == k &&
-                        current.covers_big_polymer()) {
-                        GiNaC::ex cur = current.compute_weight(lambda, d);
-                        cerr << "** Cluster " << current
-                             << " has weight " << cur << endl;
-                        acc += cur;
-                    }
-
-                    for (const subpolymer &sp : sps) {
-                        current.push_subpolymer(sp);
-                        backtrack();
-                        current.pop_subpolymer();
-                    }
-                };
-
-                backtrack();
+            assert(big_polymer.num_vertices() < 31);
+            // Generate all possible 2-linked subpolymers
+            // (polymers are always non-empty).
+            //
+            // TODO: There are cleverer ways to generate all
+            // two-linked subsets. At the very least, one may keep
+            // track of two-linked components.
+            for (int msk = 1; msk < (1<<big_polymer.num_vertices()); msk++) {
+                subpolymer sp(big_polymer, msk);
+                if (sp.is_two_linked())
+                    sps.push_back(sp);
             }
 
+            // Now we want to find all ways of picking clusters,
+            // which are tuples of subpolymers whose union is
+            // big_polymer (possibly with repeats) and whose total
+            // size is k.
+            cluster current(big_polymer);
+
+            function<void()> backtrack = [&]() {
+                if (current.total_size() > k)
+                    return;
+
+                if (current.total_size() == k &&
+                    current.covers_big_polymer()) {
+                    GiNaC::ex cur = 1;
+                    cerr << "** Cluster " << current
+                         << " has weight " << cur << endl;
+                    acc += cur;
+                }
+
+                for (const subpolymer &sp : sps) {
+                    current.push_subpolymer(sp);
+                    backtrack();
+                    current.pop_subpolymer();
+                }
+            };
+
+            backtrack();
             a_sum += acc * GiNaC::binomial(d, a);
         }
 
