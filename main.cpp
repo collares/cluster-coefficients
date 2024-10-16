@@ -17,8 +17,8 @@ void print_coefficient(std::ostream& o,
 void compute_antichains(int j,
                         GiNaC::symbol lambda,
                         GiNaC::symbol d) {
+    GiNaC::symbol n("n", "n");
     for (int odd = 0; odd < 2; odd++) {
-        GiNaC::ex n = 2*d + odd;
         std::string odd_str = odd ? "odd" : "even";
         std::cerr << "************* Case n = " << n << " *************"
                   << std::endl << std::endl;
@@ -57,6 +57,6 @@ int main(int argc, char **argv) {
     }
 
     int j = atoi(argv[1]);
-    GiNaC::symbol lambda("λ", "\\lambda"), d("d", "d");
+    GiNaC::symbol lambda("λ", "\\lambda"), d("k", "k");
     compute_antichains(j, lambda, d);
 }
