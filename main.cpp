@@ -14,35 +14,36 @@ void print_coefficient(std::ostream& o,
     o << std::endl << std::endl;
 }
 
+/* This is the main program output. It consists of two lines, each a function
+   (but not a polynomial) in n and k. The first line corresponds to the number
+   of rooted clusters in layer k-1 (it is multiplied by binomial(n, k-1)), and
+   the second line corresponds to the number of rooted clusters in layer k+1
+   (it is multiplied by binomial(n, k+1)).
+
+   The output of the program will postprocessed in a Sage Jupyter notebook to
+   make it a function of n, to evaluate it when λ = 1, and to compute other
+   functions of the output which are used in the paper.
+*/
 void compute_antichains(int j,
                         GiNaC::symbol lambda,
-                        GiNaC::symbol d) {
-    for (int odd = 0; odd < 2; odd++) {
-        GiNaC::ex n = 2*d + odd;
-        std::string odd_str = odd ? "odd" : "even";
-        std::cerr << "************* Case n = " << n << " *************"
-                  << std::endl << std::endl;
+                        GiNaC::symbol k) {
+    GiNaC::symbol n("n", "n");
+    // When replacing n = 2*k, the expressions below should be equal.
+    // This will be checked on the Jupyter notebook.
+    auto Lj_lower = antichains_inst(-1, j, n, k).compute(lambda);
+    auto Lj_upper = antichains_inst(+1, j, n, k).compute(lambda);
 
-        // Those are equal when n is even. We will test that on the Sage side.
-        auto Lj_lower = antichains_inst(-1, j, n, d).compute(lambda);
-        auto Lj_upper = antichains_inst(+1, j, n, d).compute(lambda);
+    std::cout << Lj_lower << std::endl;
+    std::cout << Lj_upper << std::endl;
 
-        // To be piped into "sage antichains_postprocess.sage"
-        std::cerr << "============ Start Sage input ============" << std::endl;
-        std::cout << j << " " << odd << std::endl;
-        std::cout << Lj_lower << std::endl;
-        std::cout << Lj_upper << std::endl;
-        std::cerr << "============  End  Sage input ============"
-                  << std::endl << std::endl;
-
-        auto Lj = Lj_lower + Lj_upper;
-        print_coefficient(std::cerr,
-                          Lj,
-                          "L" + std::to_string(j) + " for " + odd_str + " n",
-                          lambda);
-    }
+    auto Lj = Lj_lower + Lj_upper;
+    print_coefficient(std::cerr, Lj, "L" + std::to_string(j), lambda);
 }
 
+/*
+  The following function computes the coefficients for the "Counting
+  independent sets in the hypercube revisited" paper.
+*/
 void compute_independent_sets(int j,
                               GiNaC::symbol lambda,
                               GiNaC::symbol d) {
@@ -57,6 +58,6 @@ int main(int argc, char **argv) {
     }
 
     int j = atoi(argv[1]);
-    GiNaC::symbol lambda("λ", "\\lambda"), d("d", "d");
-    compute_antichains(j, lambda, d);
+    GiNaC::symbol lambda("λ", "\\lambda"), k("k", "k");
+    compute_antichains(j, lambda, k);
 }

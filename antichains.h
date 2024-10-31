@@ -1,21 +1,15 @@
 /*
-  The graph has size n = 2d or n = 2d + 1, depending on whether odd = true or
-  not.
-
   In the even case, the middle layer M is unique. In the odd case we're we will
   let M be the d-th layer. The (d+1)-th layer will be called U, and the
   (d-1)-th layer will be called L. In the odd case, L will be smaller than U.
   Together, L and U are the defect side. Note that since there are two choices
-  for M in the odd case, the answer has to be multiplied by 2 at the end, but
-  this is out of the scope of this program since the correction is not in the
-  exponent.
+  for M in the odd case, the answer has to be multiplied by 2 at the end.
 
   Polymers are still 2-linked subsets, and clusters are still tuples of
   polymers whose "union" is 2-linked. However, a "valid" polymer must be
   entirely contained in one of the layers. The same restriction does not apply
-  to clusters), so to make sure every cluster whose underlying set has k vertex
-  is counted k times, we need to fix a vertex in L, and later fix a vertex in
-  U.
+  to clusters, so to make sure every cluster whose underlying set has k vertex
+  is counted k times, we need to fix a vertex in L \cup U.
 */
 
 #ifndef CLUSTER_ANTICHAINS_H
@@ -29,8 +23,11 @@
 #include "hypercube_vertex.h"
 
 /*
-  For d = floor(n/2), this represents layers d-1, d and d+1 of a n-dimensional
-  hypercube. sz is always even in the applications, but this is not required.
+  For d = floor(sz_/2), this represents layers d-1, d and d+1 of a
+  (sz_)-dimensional hypercube. We will map layer k of the n-dimensional
+  hypercube into the middle layer of this (sz_)-dimensional hypercube. sz_ is
+  always even and k is always a central layer in the n-dimensional world in the
+  applications, but this is not required.
 */
 class middle_layers {
 private:
@@ -100,8 +97,8 @@ public:
       starting from the lower layer require at least 2*(j-1) zeros (consider a
       star) and 2*(j-2) ones (move to the upper layer and consider a star).
       Therefore, the minimum dimension is 4*(j-1). We will use 4*j to not have
-      to special case j==1. required. The middle layers (2*j-1, 2*j, 2*j+1)
-      will be mapped to (L, M, U).
+      to special case j=1. The middle layers (2*j-1, 2*j, 2*j+1) will be mapped
+      to (L, M, U).
     */
     antichains_inst(int delta_middle,
                     int j,
@@ -129,18 +126,12 @@ public:
 
     GiNaC::ex rooted_embeddings(const big_polymer<antichains_inst>& bp) const {
         auto pi = prefix_info(bp);
-        auto rl = mapping_delta_ + root_ones_;
-
-        auto root_emb = GiNaC::binomial(n_, rl);
-        if (n_ == 2*rl-2) {
-            // Hack to make \binom{2d}{d-1} and \binom{2d}{d+1} print the same.
-            // Clearly correct and may be removed if desired.
-            root_emb = GiNaC::binomial(n_, n_ - rl);
-        }
+        auto root_layer = mapping_delta_ + root_ones_;
+        auto root_emb = GiNaC::binomial(n_, root_layer);
 
         return root_emb
-            * GiNaC::binomial(rl, pi.changed_ones)
-            * GiNaC::binomial(n_ - rl, pi.changed_zeros);
+            * GiNaC::binomial(root_layer, pi.changed_ones)
+            * GiNaC::binomial(n_ - root_layer, pi.changed_zeros);
     }
 
     std::string debug_data(const big_polymer<antichains_inst>& bp) const {
