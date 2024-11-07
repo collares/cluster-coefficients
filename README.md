@@ -2,11 +2,12 @@ Assuming you have GiNaC installed, the following should create a `cluster` binar
 
 ```
 autoreconf -i
+automake
 ./configure
 make
 ```
 
-See [the Jupypter notebook](antichains-postprocessing.ipynb) for details on how to consume the output of the program.
+See [the Jupypter notebook](antichains-postprocessing.ipynb) to see a human-readable version of the coefficients, as well as details on how to consume the output of the program.
 
 TODO: Explain architectural decisions.
 
