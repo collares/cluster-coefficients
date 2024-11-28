@@ -104,7 +104,7 @@ public:
         int start = __builtin_ctz(mask_);
 
         q.push(start);
-        visited_mask |= 1<<start;
+        visited_mask = 1<<start;
         int comp_sz = 1;
 
         while (!q.empty()) {
