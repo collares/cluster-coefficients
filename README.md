@@ -7,7 +7,7 @@ automake
 make
 ```
 
-See [the Jupypter notebook](antichains-postprocessing.ipynb) to see a human-readable version of the coefficients, as well as details on how to consume the output of the program.
+See [the Jupyter notebook](antichains-postprocessing.ipynb) to see a human-readable version of the coefficients, as well as details on how to consume the output of the program.
 
 TODO: Explain architectural decisions.
 

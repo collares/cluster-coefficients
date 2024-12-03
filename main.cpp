@@ -3,6 +3,7 @@
 #include <string>
 #include "antichains.h"
 #include "hypercube.h"
+#include "cartprod/cartprod_biclique_inst.h"
 
 void print_coefficient(std::ostream& o,
                        GiNaC::ex expr,
@@ -24,10 +25,8 @@ void print_coefficient(std::ostream& o,
    make it a function of n, to evaluate it when λ = 1, and to compute other
    functions of the output which are used in the paper.
 */
-void compute_antichains(int j,
-                        GiNaC::symbol lambda,
-                        GiNaC::symbol k) {
-    GiNaC::symbol n("n", "n");
+void compute_antichains(int j, GiNaC::symbol lambda) {
+    GiNaC::symbol n("n", "n"), k("k", "k");
     // When replacing n = 2*k, the expressions below should be equal.
     // This will be checked on the Jupyter notebook.
     auto Lj_lower = antichains_inst(-1, j, n, k).compute(lambda);
@@ -44,10 +43,21 @@ void compute_antichains(int j,
   The following function computes the coefficients for the "Counting
   independent sets in the hypercube revisited" paper.
 */
-void compute_independent_sets(int j,
-                              GiNaC::symbol lambda,
-                              GiNaC::symbol d) {
+void compute_independent_sets(int j, GiNaC::symbol lambda) {
+    GiNaC::symbol d("d", "d");
     auto Lj = hypercube_inst(j, d).compute(lambda);
+    std::cout << Lj << std::endl;
+    print_coefficient(std::cerr, Lj, "L" + std::to_string(j), lambda);
+}
+
+/*
+  The following function computes the coefficients for the "Counting
+  independent sets in bipartite regular cartesian product graphs" paper.
+*/
+void compute_cartprod_biclique(int j, GiNaC::symbol lambda) {
+    GiNaC::symbol s("s", "s"), t("t", "t");
+    auto Lj = cartprod_biclique_inst(j, s, t).compute(lambda);
+    std::cout << Lj << std::endl;
     print_coefficient(std::cerr, Lj, "L" + std::to_string(j), lambda);
 }
 
@@ -58,6 +68,6 @@ int main(int argc, char **argv) {
     }
 
     int j = atoi(argv[1]);
-    GiNaC::symbol lambda("λ", "\\lambda"), k("k", "k");
-    compute_antichains(j, lambda, k);
+    GiNaC::symbol lambda("λ", "\\lambda");
+    compute_antichains(j, lambda);
 }
