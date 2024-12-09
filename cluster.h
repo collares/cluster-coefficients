@@ -20,18 +20,19 @@ template<typename I> std::ostream &operator<<(std::ostream &,
 /*
   A big polymer is simply a 2-linked ordered set of vertices containing the
   root.
+
+  FIXME: Due to design decisions which are now obsolete, big_polymer does not
+  support adding/deleting vertices, which causes a lot of copying when
+  generating big polymers in the first place, since dist_to_embeddable and
+  is_embeddable take a big_polymer argument and not a "partial polymer" one.
 */
 
 template <typename I> class big_polymer {
 private:
-    // Annoyingly, during construction it is really convenient to have this as
-    // a set, but we want to use the ordering later.
     std::vector<typename I::V> data;
 
 public:
-    big_polymer(const std::set<typename I::V>& shv) {
-        data = std::vector(shv.begin(), shv.end());
-    }
+    big_polymer(const std::vector<typename I::V>& shv) : data(shv) { }
 
     const typename I::V vtx(int idx) const {
         return data[idx];
@@ -64,10 +65,10 @@ std::ostream& operator<<(std::ostream& o, const big_polymer<I>& bp) {
 template<typename I>
 class subpolymer {
 public:
-    big_polymer<I>& bp_;
+    const big_polymer<I>& bp_;
     unsigned int mask_;
 
-    subpolymer(big_polymer<I>& bp, unsigned int mask = 0)
+    subpolymer(const big_polymer<I>& bp, unsigned int mask = 0)
         : bp_(bp), mask_(mask) {
     }
 
@@ -307,9 +308,16 @@ std::ostream& operator<<(std::ostream& o, const cluster<I>& c) {
   this".
 */
 template<typename I> class instance {
-public:
+private:
+    GiNaC::ex ans_;
+
+    unsigned long long processed_tuples_;
+    unsigned long long processed_multisets_;
+    unsigned long long processed_big_polymers_;
+
     int j_; // this instance computes L_j
 
+public:
     instance(int j) : j_(j) { }
 
     /*
@@ -377,8 +385,72 @@ public:
         return ans;
     }
 
+    void process_big_polymer(const big_polymer<I>& bp,
+                             GiNaC::symbol lambda) {
+        // std::cerr << "* Processing big polymer " << bp
+        //           << ", root = " << static_cast<const I*>(this)->root()
+        //           << ", " << debug_data(bp) << std::endl;
+        std::vector<subpolymer<I>> sps;
+
+        /*
+          Generate all possible 2-linked subpolymers (polymers are always
+          non-empty).
+
+          TODO: The clever thing to do here would be to generate the
+          incompatibility graph for all subpolymers here (instead of
+          computing for the chosen subpolymers when computing the Ursell
+          function), and use this to only generate clusters for which the
+          incompatibility graph is connected.
+        */
+        for (int mask = 1; mask < (1 << bp.size()); mask++) {
+            subpolymer<I> sp(bp, mask);
+            if (sp.is_two_linked() && is_valid(sp))
+                sps.push_back(sp);
+        }
+
+        /*
+          Now we want to find all ways of picking clusters, which are
+          tuples of elements of sps whose union is bp (possibly with
+          repeats) and whose sum of sizes is j_. Since the weight of a
+          cluster does not depend on the ordering of its polymers, we may
+          do that by finding multisets of polymers with the above property
+          then multiplying by the appropriate number of permutations.
+        */
+
+        GiNaC::ex bp_contrib = 0;
+        cluster<I> cl(bp); // start with the empty cluster, then backtrack
+
+        std::function<void(int, int, int)> backtrack =
+            [&](int last_idx, int cur_run, int num_tuples) {
+                if (cl.total_size() == j_ && cl.covers_big_polymer()) {
+                    GiNaC::ex cur = compute_weight(cl, lambda);
+                    bp_contrib += num_tuples * cur;
+                    processed_tuples_ += num_tuples;
+                    processed_multisets_++;
+                    // std::cerr << "** Cluster " << cl << " has weight "
+                    //            << cur << " and permutations of it occur "
+                    //            << num_tuples << " times " << std::endl;
+                }
+
+                if (cl.total_size() >= j_)
+                    return;
+
+                for (int i = last_idx; i < sps.size(); i++) {
+                    int next_run = last_idx == i ? cur_run + 1 : 1;
+                    cl.push_subpolymer(sps[i]);
+                    backtrack(i,
+                              next_run,
+                              cl.num_polymers() * num_tuples / next_run);
+                    cl.pop_subpolymer();
+                }
+            };
+
+        backtrack(0, 0, 1);
+        ans_ += bp_contrib * rooted_embeddings(bp) / bp.size();
+    }
+
     /*
-      Generates the set of embeddable big polymers.
+      Generates the set of embeddable big polymers and processes them.
 
       A "big polymer" is a 2-linked set which lives on the defect side and
       which will be the vertex set of a cluster. By definition, we also require
@@ -388,140 +460,87 @@ public:
       Concretely, this means that the set of i->(1-i) active coordinates is a
       prefix of the originally-i coordinates.
 
-      TODO: Unfortunately the procedure described in Jenssen--Perkins can
-      generate any big polymer multiple times, so we have to use a lot of
-      memory for deduplication. There must be a fast way of generating each
-      embeddable set once without using too much memory.
+      j_ is the size of the cluster. Most of this function generates big
+      polymers of tize at most j_. It then delegates the task of processing
+      them to the function `process_big_polymer` above.
     */
-    std::vector<big_polymer<I>>
-    generate_embeddable_big_polymers(int max_elements) const {
+    GiNaC::ex compute(GiNaC::symbol lambda) {
+        assert(j_ < 31);
+
+        ans_ = 0;
+        processed_big_polymers_ = 0;
+        processed_tuples_ = 0;
+        processed_multisets_ = 0;
+
+        // Invariant: seen_set and seen contain the same elements.
+        std::vector<typename I::V> seen;
+        std::set<typename I::V> seen_set;
+
         typename I::G graph = static_cast<const I*>(this)->graph_;
-        using partial_polymer = std::set<typename I::V>;
+        typename I::V rt = static_cast<const I*>(this)->root();
+        seen_set.insert(rt);
+        seen.push_back(rt);
 
-        std::vector<big_polymer<I>> ret;
+        // cur is always 2-linked, but may not be embeddable. As the
+        // backtracking progresses, it runs over all 2-linked subsets of size k
+        // containing rt whose dist_to_embeddable is at most <= j_ - k (for 1
+        // <= k <= j_).
+        std::vector<typename I::V> cur;
 
-        partial_polymer start;
-        start.insert(static_cast<const I*>(this)->root());
-        if (is_embeddable(start))
-            ret.push_back(start);
+        std::function<void(int)> backtrack = [&](int fringe_start) {
+            // Invariant: Every element of seen[0], ..., seen[fringe_start - 1]
+            // has been explored (that is, it is either in cur or will never be
+            // considered in subcalls). The remaining elements in `seen` (the
+            // "fringe") are still to be processed. The fringe acts as a queue,
+            // so we are trying possibilities breadth-first, despite what the
+            // recursion might suggest.
+            //
+            // Every element of `seen` is a neighbour (in the second power) of
+            // some element of cur. In particular, seen always has size
+            // polynomial in j_. The recursion stack is cur.size() layers deep
+            // at any given point.
+            int seen_sz = seen.size();
+            for (int i = fringe_start; i < seen_sz; i++) {
+                auto& v = seen[i];
+                cur.push_back(v);
 
-        std::set<partial_polymer> Lprev, Lcur;
-        Lprev.insert(start);
+                big_polymer<I> bp(cur);
+                if (cur.size() <= j_ && is_embeddable(bp)) {
+                    process_big_polymer(bp, lambda);
+                    processed_big_polymers_++;
+                    if ((processed_big_polymers_ & (1ULL<<18)-1) == 0)
+                        std::cerr << "Processed " << processed_big_polymers_
+                                  << " big polymers" << std::endl;
+                }
 
-        for (int k = 1; k < max_elements; k++) {
-            Lcur.clear();
-
-            for (const partial_polymer &prev_set : Lprev)
-                for (auto v : prev_set) {
-                    auto new_vtxs = graph.second_neighbourhood(v);
-                    for (auto w : new_vtxs) {
-                        partial_polymer new_set = prev_set;
-
-                        if (new_set.find(w) == new_set.end()) {
-                            new_set.insert(w);
-                            assert(new_set.size() == k + 1);
-
-                            big_polymer<I> bp(new_set);
-                            if (Lcur.find(new_set) == Lcur.end() &&
-                                dist_to_embeddable(bp) <= max_elements - (k+1))
-                                Lcur.insert(new_set);
+                if (cur.size() < j_ &&
+                    dist_to_embeddable(bp) <= j_ - cur.size()) {
+                    for (auto& w : graph.second_neighbourhood(v))
+                        if (seen_set.find(w) == seen_set.end()) {
+                            seen.push_back(w);
+                            seen_set.insert(w);
                         }
+
+                    backtrack(i+1);
+
+                    // Remove the elements we added above.
+                    while (seen.size() > seen_sz) {
+                        seen_set.erase(seen.back());
+                        seen.pop_back();
                     }
                 }
 
-            for (const partial_polymer &pp : Lcur) {
-                big_polymer<I> bp(pp);
-                if (is_embeddable(bp))
-                    ret.push_back(bp);
+                cur.pop_back();
             }
+        };
 
-            swap(Lprev, Lcur);
-        }
-
-        return ret;
-    }
-
-    GiNaC::ex compute(GiNaC::symbol lambda) {
-        GiNaC::ex ans;
-
-        assert(j_ < 31);
-        std::cerr << "Generating big polymers..." << std::endl;
-        std::vector<big_polymer<I>> L =
-            generate_embeddable_big_polymers(j_);
-
-        unsigned long long processed_tuples = 0;
-        unsigned long long processed_multisets = 0;
-
-        std::cerr << "About to process " << L.size() << " big polymers"
-                  << std::endl;
-        for (auto &bp : L) {
-            // std::cerr << "* Processing big polymer " << bp
-            //           << ", root = " << static_cast<const I*>(this)->root()
-            //           << ", " << debug_data(bp) << std::endl;
-
-            std::vector<subpolymer<I>> sps;
-
-            /*
-              Generate all possible 2-linked subpolymers (polymers are always
-              non-empty).
-
-              TODO: The clever thing to do here would be to generate the
-              incompatibility graph for all subpolymers here (instead of
-              computing for the chosen subpolymers when computing the Ursell
-              function), and use this to only generate clusters for which the
-              incompatibility graph is connected.
-            */
-            for (int mask = 1; mask < (1 << bp.size()); mask++) {
-                subpolymer sp(bp, mask);
-                if (sp.is_two_linked() && is_valid(sp))
-                    sps.push_back(sp);
-            }
-
-            /*
-              Now we want to find all ways of picking clusters, which are
-              tuples of elements of sps whose union is bp (possibly with
-              repeats) and whose sum of sizes is j_. Since the weight of a
-              cluster does not depend on the ordering of its polymers, we may
-              do that by finding multisets of polymers with the above property
-              then multiplying by the appropriate number of permutations.
-            */
-
-            GiNaC::ex bp_contrib = 0;
-            cluster<I> cl(bp); // start with the empty cluster, then backtrack
-
-            std::function<void(int, int, int)> backtrack =
-                [&](int last_idx, int cur_run, int num_tuples) {
-                    if (cl.total_size() == j_ && cl.covers_big_polymer()) {
-                        GiNaC::ex cur = compute_weight(cl, lambda);
-                        bp_contrib += num_tuples * cur;
-                        processed_tuples += num_tuples;
-                        processed_multisets++;
-                        // std::cerr << "** Cluster " << cl << " has weight "
-                        //            << cur << " and permutations of it occur "
-                        //            << num_tuples << " times " << std::endl;
-                    }
-
-                    if (cl.total_size() >= j_)
-                        return;
-
-                    for (int i = last_idx; i < sps.size(); i++) {
-                        int next_run = last_idx == i ? cur_run + 1 : 1;
-                        cl.push_subpolymer(sps[i]);
-                        backtrack(i,
-                                  next_run,
-                                  cl.num_polymers() * num_tuples / next_run);
-                        cl.pop_subpolymer();
-                    }
-                };
-
-            backtrack(0, 0, 1);
-            ans += bp_contrib * rooted_embeddings(bp) / bp.size();
-        }
-
-        std::cerr << "Done, processed " << processed_tuples << " clusters"
-                  << " (" << processed_multisets << " multisets)"
+        backtrack(0);
+        std::cerr << "Done, processed "
+                  << processed_big_polymers_ << " big polymers and "
+                  << processed_tuples_ << " clusters"
+                  << " (" << processed_multisets_ << " multisets)"
                   << std::endl << std::endl;
-        return ans;
+        return ans_;
     }
 };
 

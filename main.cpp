@@ -30,9 +30,9 @@ void compute_antichains(int j, GiNaC::symbol lambda) {
     // When replacing n = 2*k, the expressions below should be equal.
     // This will be checked on the Jupyter notebook.
     auto Lj_lower = antichains_inst(-1, j, n, k).compute(lambda);
-    auto Lj_upper = antichains_inst(+1, j, n, k).compute(lambda);
-
     std::cout << Lj_lower << std::endl;
+
+    auto Lj_upper = antichains_inst(+1, j, n, k).compute(lambda);
     std::cout << Lj_upper << std::endl;
 
     auto Lj = Lj_lower + Lj_upper;
