@@ -52,6 +52,7 @@ public:
         int prefix_sz = std::bit_width(active_mask);
         int dist = prefix_sz - std::popcount(active_mask);
 
+        int max_gap = 0;
         for (int j = 0; j < 2*j_; j++) {
             unsigned int coord_masks[2] = {0, 0};
             for (int i = 0; i < bp.size(); i++) {
@@ -60,8 +61,11 @@ public:
             }
 
             assert(coord_masks[0] & 1); // the root is even but should not be counted
-            dist += std::bit_width(coord_masks[0]>>1) - std::popcount(coord_masks[0]>>1);
-            dist += std::bit_width(coord_masks[1]) - std::popcount(coord_masks[1]);
+            int cur_gap =
+              std::bit_width(coord_masks[0]>>1) - std::popcount(coord_masks[0]>>1)
+              + std::bit_width(coord_masks[1]) - std::popcount(coord_masks[1]);
+            dist += cur_gap;
+            max_gap = std::max(max_gap, cur_gap);
 
             if (compute_embeddings) {
                 assert(!(coord_masks[0] & (coord_masks[0]+1)));
@@ -74,7 +78,7 @@ public:
         if (compute_embeddings)
             emb *= GiNaC::binomial(t_, prefix_sz);
 
-        return {(dist+1)/2, emb};
+        return {std::max(max_gap, (dist+1)/2), emb};
     }
 
     std::string
