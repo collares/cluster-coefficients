@@ -6,9 +6,9 @@
 
 /*
   This instance computes cluster expansion coefficients for the cartesian
-  product of t copies of K_{s,s}. For computing L_j, it does so by considering
-  "embeddable" structures which are subsets of the cartesian product of 2*j
-  copies of K_{j,j}.
+  product of t copies of K_{s,s}. For computing L_j (j >= 2), it does so by
+  considering "embeddable" structures which are subsets of the cartesian
+  product of 2*(j-1) copies of K_{j,j-1}.
 */
 class cartprod_biclique_inst : public instance<cartprod_biclique_inst> {
 private:
@@ -20,13 +20,11 @@ public:
     using V = cartprod<biclique>::V;
     G graph_;
 
-    // Technically we only need 2*(j_-1), but then we would have to special
-    // case j_ == 1.
     cartprod_biclique_inst(int j, GiNaC::symbol s, GiNaC::symbol t)
-        : instance(j), j_(j), s_(s), t_(t), graph_(2*j) { }
+        : instance(j), j_(j), s_(s), t_(t), graph_(2*std::max(1, j-1)) { }
 
     V root() const {
-        return V(std::vector<biclique_vertex>(2*j_, 0));
+        return V(std::vector<biclique_vertex>(graph_.num_coords(), 0));
     }
 
     struct data {
@@ -65,7 +63,7 @@ public:
         int dist = 0;
         int first_nonempty = -1;
 
-        for (int j = 2*j_ - 1; j >= 0; j--) {
+        for (int j = graph_.num_coords() - 1; j >= 0; j--) {
             unsigned int coord_masks[2] = {0, 0};
             for (int i = 0; i < bp.size(); i++) {
                 auto& v = bp.vtx(i);

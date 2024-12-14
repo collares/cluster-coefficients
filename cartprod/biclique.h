@@ -38,34 +38,38 @@ std::ostream& operator<<(std::ostream& o, const biclique_vertex& v) {
 }
 
 /*
-  This is a K_{j, j}, where j = sz/2. The bipartition consists of evens and
-  odds.
+  This is a complete bipartite graph of size sz_. The bipartition consists of
+  evens and odds.
 */
 class biclique {
 private:
-    int j_;
+    int sz_;
 
 public:
     using V = biclique_vertex;
 
-    biclique(int sz) : j_(sz/2) { }
+    biclique(int sz) : sz_(sz) { }
 
     std::vector<V> neighbourhood(V v) {
-        unsigned int parity_bit = !v.parity();
-
         std::vector<V> ret;
-        for (int i = 0; i < j_; i++)
-            ret.push_back((2*i) | parity_bit);
+
+        int cur = !v.parity();
+        while (cur < sz_) {
+            ret.push_back(cur);
+            cur += 2;
+        }
         return ret;
     }
 
     std::vector<V> second_neighbourhood(V v) {
-        unsigned int parity_bit = v.parity();
-
         std::vector<V> ret;
-        for (int i = 0; i < j_; i++)
-            if (i != v.data_/2)
-                ret.push_back((2*i) | parity_bit);
+
+        int cur = v.parity();
+        while (cur < sz_) {
+            if (cur != v.data_)
+                ret.push_back(cur);
+            cur += 2;
+        }
         return ret;
     }
 };

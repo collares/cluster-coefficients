@@ -71,7 +71,7 @@ std::ostream& operator<<(std::ostream& o, const cartprod_vertex<B>& v) {
 }
 
 /*
-  A cartesian product of j copies of the same graph of size j.
+  A cartesian product of j copies of the same graph of size j+1.
 */
 template<typename B> class cartprod {
 private:
@@ -81,7 +81,11 @@ private:
 public:
     using V = cartprod_vertex<B>;
 
-    cartprod(int j) : base_graph_(B(j)), j_(j) { }
+    cartprod(int j) : base_graph_(B(j+1)), j_(j) { }
+
+    int num_coords() const {
+        return j_;
+    }
 
     std::vector<V> second_neighbourhood(V v) {
         assert(v.num_coords() == j_);
@@ -103,8 +107,6 @@ public:
             }
         }
 
-        for (auto v2 : ans)
-            assert(v.dist(v2) == 2);
         return ans;
     }
 };
