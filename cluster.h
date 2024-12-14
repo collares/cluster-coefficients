@@ -510,7 +510,8 @@ public:
                     processed_big_polymers_++;
                     if ((processed_big_polymers_ & (1ULL<<18)-1) == 0)
                         std::cerr << "Processed " << processed_big_polymers_
-                                  << " big polymers" << std::endl;
+                                  << " big polymers, last one was "
+                                  << bp << std::endl;
                 }
 
                 if (cur.size() < j_ &&

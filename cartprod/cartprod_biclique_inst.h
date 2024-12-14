@@ -44,40 +44,71 @@ public:
         return ans;
     }
 
+    /*
+      For us, a polymer is embeddable if:
+
+      1) In each coordinate i, the set O_i (resp E_i) of odd (resp even)
+      values seen in that coordinate is a prefix of the odd (resp even)
+      positive integers.
+
+      2) |O_i| + |E_i| >= |O_{i+1}| + |E_{i+1}| for every i. In particular,
+      this implies that the set of active coordinates form a prefix.
+    */
+
     data active_info(const big_polymer<cartprod_biclique_inst>& bp,
         bool compute_embeddings = false) const {
         GiNaC::ex emb = 1;
 
-        unsigned int active_mask = active_union(bp);
-        int prefix_sz = std::bit_width(active_mask);
-        int dist = prefix_sz - std::popcount(active_mask);
-
         int max_gap = 0;
-        for (int j = 0; j < 2*j_; j++) {
+        int max_size_when_filled = 0;
+        int cur_run = 0;
+        int dist = 0;
+        int first_nonempty = -1;
+
+        for (int j = 2*j_ - 1; j >= 0; j--) {
             unsigned int coord_masks[2] = {0, 0};
             for (int i = 0; i < bp.size(); i++) {
                 auto& v = bp.vtx(i);
                 coord_masks[v.get(j).parity()] |= 1<<(v.get(j).data_ >> 1);
             }
+            // the root is even but should not be counted
+            assert(coord_masks[0] & 1);
+            coord_masks[0] >>= 1;
 
-            assert(coord_masks[0] & 1); // the root is even but should not be counted
-            int cur_gap =
-              std::bit_width(coord_masks[0]>>1) - std::popcount(coord_masks[0]>>1)
-              + std::bit_width(coord_masks[1]) - std::popcount(coord_masks[1]);
+            if (first_nonempty == -1) {
+                if (!coord_masks[0] && !coord_masks[1])
+                    continue;
+                first_nonempty = j;
+            }
+
+            // Property 2 implies `size_when_filled` must appear in
+            // non-decreasing order as we iterate backwards.
+            int size_when_filled = std::bit_width(coord_masks[0])
+                + std::bit_width(coord_masks[1]);
+            int to_increasing = max_size_when_filled - size_when_filled;
+            int cur_gap = size_when_filled
+                - std::popcount(coord_masks[0])
+                - std::popcount(coord_masks[1]);
             dist += cur_gap;
-            max_gap = std::max(max_gap, cur_gap);
+
+            if (to_increasing < 0) {
+                max_size_when_filled = size_when_filled;
+                max_gap = std::max(max_gap, cur_gap);
+                cur_run = 1;
+            } else {
+                dist += to_increasing;
+                max_gap = std::max(max_gap, cur_gap + to_increasing);
+                cur_run++;
+            }
 
             if (compute_embeddings) {
-                assert(!(coord_masks[0] & (coord_masks[0]+1)));
-                assert(!(coord_masks[1] & (coord_masks[1]+1)));
-                emb *= GiNaC::binomial(s_ - 1, std::bit_width(coord_masks[0]>>1));
+                emb *= (t_ - (first_nonempty - j)) / cur_run;
+                emb *= GiNaC::binomial(s_ - 1, std::bit_width(coord_masks[0]));
                 emb *= GiNaC::binomial(s_, std::bit_width(coord_masks[1]));
             }
         }
 
-        if (compute_embeddings)
-            emb *= GiNaC::binomial(t_, prefix_sz);
-
+        assert(!compute_embeddings || dist == 0);
         return {std::max(max_gap, (dist+1)/2), emb};
     }
 
@@ -91,7 +122,8 @@ public:
         return ss.str();
     }
 
-    int dist_to_embeddable(const big_polymer<cartprod_biclique_inst>& bp) const {
+    int
+    dist_to_embeddable(const big_polymer<cartprod_biclique_inst>& bp) const {
         return active_info(bp).dist_to_embeddable;
     }
 
