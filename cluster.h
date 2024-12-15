@@ -375,22 +375,13 @@ public:
         return static_cast<const I*>(this)->weight(sp, lambda);
     }
 
-    // TODO: This is here because it relies on the specific weight function.
-    // Should it really be here instead of on cluster, though?
-    inline GiNaC::ex compute_weight(const cluster<I>& cl,
-                                    GiNaC::symbol lambda) const {
-        GiNaC::ex ans = cl.compute_ursell();
-        for (auto sp : cl.elems_)
-            ans *= weight(sp, lambda);
-        return ans;
-    }
-
     void process_big_polymer(const big_polymer<I>& bp,
                              GiNaC::symbol lambda) {
         // std::cerr << "* Processing big polymer " << bp
         //           << ", root = " << static_cast<const I*>(this)->root()
         //           << ", " << debug_data(bp) << std::endl;
         std::vector<subpolymer<I>> sps;
+        std::vector<GiNaC::ex> weights;
 
         /*
           Generate all possible 2-linked subpolymers (polymers are always
@@ -404,8 +395,10 @@ public:
         */
         for (int mask = 1; mask < (1 << bp.size()); mask++) {
             subpolymer<I> sp(bp, mask);
-            if (sp.is_two_linked() && is_valid(sp))
+            if (sp.is_two_linked() && is_valid(sp)) {
                 sps.push_back(sp);
+                weights.push_back(weight(sp, lambda));
+            }
         }
 
         /*
@@ -419,11 +412,18 @@ public:
 
         GiNaC::ex bp_contrib = 0;
         cluster<I> cl(bp); // start with the empty cluster, then backtrack
+        std::vector<int> ids;
 
         std::function<void(int, int, int)> backtrack =
             [&](int last_idx, int cur_run, int num_tuples) {
                 if (cl.total_size() == j_ && cl.covers_big_polymer()) {
-                    GiNaC::ex cur = compute_weight(cl, lambda);
+                    // We could have a cl.weight() function, but caching the
+                    // weights of subpolymers is significantly more efficient
+                    // in some cases and this is the simplest way to do so.
+                    GiNaC::ex cur = cl.compute_ursell();
+                    for (auto id : ids)
+                        cur *= weights[id];
+
                     bp_contrib += num_tuples * cur;
                     processed_tuples_ += num_tuples;
                     processed_multisets_++;
@@ -438,9 +438,11 @@ public:
                 for (int i = last_idx; i < sps.size(); i++) {
                     int next_run = last_idx == i ? cur_run + 1 : 1;
                     cl.push_subpolymer(sps[i]);
+                    ids.push_back(i);
                     backtrack(i,
                               next_run,
                               cl.num_polymers() * num_tuples / next_run);
+                    ids.pop_back();
                     cl.pop_subpolymer();
                 }
             };
