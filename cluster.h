@@ -179,6 +179,10 @@ public:
         return union_mask_.top()+1 == 1<<bp_.size();
     }
 
+    unsigned int uncovered() {
+        return ((1<<bp_.size())-1) & ~(union_mask_.top());
+    }
+
     size_t total_size() {
         return total_sz_;
     }
@@ -393,9 +397,20 @@ public:
           function), and use this to only generate clusters for which the
           incompatibility graph is connected.
         */
-        for (int mask = 1; mask < (1 << bp.size()); mask++) {
+        for (int mask = 1; mask < (1 << bp.size()); mask++)
+            if (mask & (mask-1)) {
+                subpolymer<I> sp(bp, mask);
+                if (sp.is_two_linked() && is_valid(sp)) {
+                    sps.push_back(sp);
+                    weights.push_back(weight(sp, lambda));
+                }
+            }
+
+        // Leaving the singletons for last ensures the backtacking never
+        // reaches a dead end.
+        for (int mask = 1; mask < (1 << bp.size()); mask <<= 1) {
             subpolymer<I> sp(bp, mask);
-            if (sp.is_two_linked() && is_valid(sp)) {
+            if (is_valid(sp)) {
                 sps.push_back(sp);
                 weights.push_back(weight(sp, lambda));
             }
@@ -430,11 +445,14 @@ public:
                     // std::cerr << "** Cluster " << cl << " has weight "
                     //            << cur << " and permutations of it occur "
                     //            << num_tuples << " times " << std::endl;
+                    return;
                 }
 
-                if (cl.total_size() >= j_)
+                if (cl.total_size() + std::popcount(cl.uncovered()) > j_)
                     return;
 
+                // It would be good to improve this part to ensure polynomial
+                // delay.
                 for (int i = last_idx; i < sps.size(); i++) {
                     int next_run = last_idx == i ? cur_run + 1 : 1;
                     cl.push_subpolymer(sps[i]);
@@ -444,6 +462,11 @@ public:
                               cl.num_polymers() * num_tuples / next_run);
                     ids.pop_back();
                     cl.pop_subpolymer();
+
+                    // Subpolymers of size 1 are tried last. If we skip the
+                    // last chance of covering a vertex, no need to continue.
+                    if (sps[i].size() == 1 && (cl.uncovered() & sps[i].mask_))
+                        break;
                 }
             };
 
