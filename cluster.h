@@ -191,30 +191,156 @@ public:
         return elems_.size();
     }
 
-    /* The Ursell function of a graph is the sum over all subsets of edges A
-       inducing a connected graph of (-1)^{|A|}, normalized by 1/v(H)!. This
-       computes the Ursell function of the incompatibility graph of the
-       cluster.
+    /*
+      For a graph H represented by an adjacency matrix (in bitmask format), the
+      function below computes (-1)^{v(H)-1} T_H(1, 0) / v(H)! by using the
+      deletion-contraction formula. No loops or multiple edges are ever
+      present.
 
-       The above implementation is very naive, but with caching it does not
-       seem to be the bottleneck. Two approaches to improve it would be:
+      TODO: Produce a canonical label of the input graph. This is ideal, since
+      there are only 208 graphs with at most 6 vertices up to isomorphism, and
+      the number of polymers (vertices of the incompatibility graph) is not
+      big in practice.
 
-       1) Produce a canonical label of the input graph. This is ideal, since
-       there are only 208 graphs with at most 6 vertices up to isomorphism, and
-       the number of polymers (vertices of the incompatibility graph) is not
-       big in practice.
+      TODO: This should not be here, but in a global cache.
+    */
+    GiNaC::ex
+    delete_contract(int n,
+                    std::vector<unsigned int>& adj_masks) const {
+        // `cache_msk` needs to have enough bits to represent all (n choose 2)
+        // edges, so we assert n <= 8. We can bump it to n <= 11 if `cache_msk`
+        // is 64-bit.
+        assert(n >= 1 && n <= 8);
+        if (n == 1)
+            return 1;
 
-       2) Use a smarter algorithm. Deletion/contraction (perhaps splitting into
-       biconnected components) is already a theoretical improvement, but
-       Jenssen--Perkins note that Ursell function of a graph is, up to a
-       multiplicative factor of ((-1)^(1-v(H)))/v(H)!), an evaluation of the
-       Tutte polynomial at (1, 0). Tutte polynomials may be evaluated in
-       vertex-exponential time by an algorithm of Björklund, Husfeldt, Kaski
-       and Koivisto. Both approaches are unlikely to improve the running time
-       in practice, since we are interested in very small graphs (up to 6
-       vertices).
+        unsigned int cache_msk = 0;
+        for (int i = 0; i < n; i++) {
+            cache_msk <<= n-1-i;
+            cache_msk |= adj_masks[i]>>(i+1);
+        }
+
+        if (std::popcount(cache_msk) + 1 < n)
+            return 0;
+
+        static std::map<std::pair<int, unsigned int>, GiNaC::ex> cache;
+        auto it = cache.find(std::make_pair(n, cache_msk));
+        if (it != cache.end())
+            return it->second;
+
+        int ev = -1, ew = -1;
+        {
+            int pretime = 0;
+            int num[n], low[n];
+            memset(num, -1, sizeof num);
+
+            std::function<void(int, int)> dfs = [&](int v, int parent) {
+                num[v] = low[v] = pretime++;
+                for (unsigned int it = adj_masks[v]; it; it &= it-1) {
+                    int w = __builtin_ctz(it);
+                    if (w == parent)
+                        continue;
+
+                    if (num[w] == -1) {
+                        dfs(w, v);
+                        low[v] = std::min(low[v], low[w]);
+                    } else
+                        low[v] = std::min(low[v], num[w]);
+
+                    if (low[w] > num[v]) {
+                        ev = v;
+                        ew = w;
+                    }
+                }
+            };
+
+            dfs(0, -1);
+            // The graph is disconnected. This never happens in recursive calls.
+            if (pretime != n)
+                return cache[std::make_pair(n, cache_msk)] = 0;
+        }
+
+        if (ew < ev)
+            std::swap(ev, ew);
+
+        GiNaC::ex ans;
+        if (ev == -1) {
+            // No edge is a bridge, so we need to delete as well as contract.
+            for (int v = 0; v < n; v++)
+                if (adj_masks[v]) {
+                    ev = v;
+                    ew = __builtin_ctz(adj_masks[v]);
+                    break;
+                }
+
+            adj_masks[ev] &= ~(1U<<ew);
+            adj_masks[ew] &= ~(1U<<ev);
+            ans = delete_contract(n, adj_masks);
+            adj_masks[ev] |= 1U<<ew;
+            adj_masks[ew] |= 1U<<ev;
+        }
+
+        // We will contract the edge {ev, ew}. `ew` will be deleted. We use
+        // that ev is not n-1.
+        {
+            std::vector<unsigned int> cont_masks = adj_masks;
+            cont_masks[ev] &= ~(1U<<ew);
+            cont_masks[ew] &= ~(1U<<ev);
+
+            for (unsigned int it = cont_masks[ew]; it; it &= it-1) {
+                int w2 = __builtin_ctz(it);
+                cont_masks[ev] |= 1U<<w2;
+                cont_masks[w2] |= 1U<<ev;
+                cont_masks[w2] &= ~(1U<<ew);
+            }
+            cont_masks[ew] = 0;
+
+            if (ew != n-1) {
+                for (unsigned int it = cont_masks[n-1]; it; it &= it-1) {
+                    int w2 = __builtin_ctz(it);
+                    cont_masks[w2] |= 1U<<ew;
+                    cont_masks[w2] &= ~(1U<<(n-1));
+                }
+                std::swap(cont_masks[ew], cont_masks[n-1]);
+            }
+
+            ans -= delete_contract(n-1, cont_masks)/n;
+        }
+
+        return cache[std::make_pair(n, cache_msk)] = ans;
+    }
+
+    /*
+       The Ursell function of a graph is the sum over all subsets of edges A
+       inducing a connected graph of (-1)^{|A|}, normalized by 1/v(H)!.
+       Previous tests showed that even iterating over all subsets of edges,
+       using the straightforward definition, was fast enough as long as we
+       cached answers. But, since it equals (-1)^{v(H)-1} T_H(1, 0) / v(H)!,
+       where T_H is the Tutte polynomial of the graph, we might as well compute
+       the desired quantity using deletion contraction.
     */
     GiNaC::ex compute_ursell() const {
+        int k = num_polymers();
+        if (k == 1)
+            return 1;
+
+        std::vector<unsigned int> adj_masks(k);
+        for (int i = 0; i < k; i++)
+            for (int j = i+1; j < k; j++)
+                if (elems_[i].is_incompatible_with(elems_[j])) {
+                    adj_masks[i] |= 1U<<j;
+                    adj_masks[j] |= 1U<<i;
+                }
+
+        return delete_contract(k, adj_masks);
+    }
+
+    /*
+      A naive function which just iterates over all subsets of edges. For
+      verification purposes only, but for small graphs it is quite fast.
+      It also asserts that deletion-contraction computes the same answer.
+    */
+    GiNaC::ex compute_ursell_brute_force() const {
         assert(num_polymers());
         if (num_polymers() == 1)
             return 1;
@@ -229,8 +355,10 @@ public:
                 if (elems_[i].is_incompatible_with(elems_[j]))
                     cache_msk |= 1U<<msk_pos;
 
-        if (std::popcount(cache_msk) + 1 < num_polymers())
+        if (std::popcount(cache_msk) + 1 < num_polymers()) {
+            assert(compute_ursell() == 0);
             return 0;
+        }
 
         auto it = cache.find(std::make_pair(num_polymers(), cache_msk));
         if (it != cache.end())
@@ -280,6 +408,7 @@ public:
                 break;
         }
 
+        assert(compute_ursell() == ans / GiNaC::factorial(num_polymers()));
         return cache[std::make_pair(num_polymers(), cache_msk)] =
             ans / GiNaC::factorial(num_polymers());
     }
